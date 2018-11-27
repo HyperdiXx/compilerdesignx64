@@ -261,3 +261,7 @@ __pycache__/
 *.pyc
 *.filters
 *.vcxproj
+compilerdesign/compilerdesign.vcxproj
+compilerdesign/compilerdesign.vcxproj.filters
+*.vcxproj
+*.filters
