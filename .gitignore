@@ -265,3 +265,6 @@ compilerdesign/compilerdesign.vcxproj
 compilerdesign/compilerdesign.vcxproj.filters
 *.vcxproj
 *.filters
+*.filters
+*.vcxproj
+compilerdesign/compilerdesign.vcxproj
