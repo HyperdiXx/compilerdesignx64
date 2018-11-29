@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 #define Assert(x) \
-	if(!(x)) { MessageBoxA(0, #x, "Faiuree", MB_OK); __debugbreak(); }
+	if(!(x)) { MessageBoxA(0, #x, "Failuree", MB_OK); __debugbreak(); }
 
 extern "C" void assembly_test();
 
@@ -30,7 +30,7 @@ enum Register
 	R12 = 12, 
 	R13 = 13,
 	R14 = 14, 
-	R15 = 15
+	R15 = 15,
 };
 
 enum Scale
@@ -74,9 +74,10 @@ void Emit4disp(uint32 w)
 void EmitRxMode(uint8 mod, uint8 rx, uint8 rm)
 {
 	Assert(mod < 4);
-	Assert(rx < 8);
-	Assert(rm < 8);
-	Emit(rm | (rx << 3) | (mod << 6));
+	Assert(rx < 16);
+	Assert(rm < 16);
+	
+	Emit((rm &= 7) | ((rx &= 7) << 3) | (mod << 6));
 }
 
 
@@ -87,11 +88,19 @@ void EmitDirect(uint8 rx, Register operand)
 }
 
 //add rax, [rcx]: rx = RAX, operand = RCX
-void EmitIndirect(uint8 rx, Register operand)
+void EmitIndirect(uint8 rx, Register base)
 {
-	Assert(operand != RSP);
-	Assert(operand != RBP);
-	EmitRxMode(INDIRECT, rx, operand);
+	Assert((base & 7) != RSP);
+	Assert((base & 7) != RBP);
+	EmitRxMode(INDIRECT, rx, base);
+}
+
+//add rax, [rip + 0x12345678]
+//rax = RAX, disp = 0x12345678
+void EmitIndirectDisplayRip(uint8 rx, uint32 disp)
+{
+	EmitRxMode(INDIRECT, rx, RBP);
+	Emit4disp(disp);
 }
 
 void EmitDisplaced(uint8 rx, uint32 disp)
@@ -100,32 +109,39 @@ void EmitDisplaced(uint8 rx, uint32 disp)
 	Emit4disp(disp);
 }
 
-//add rax, [rcx + 0x12]: rx = RAX, operand = RCX, displacement = 0x12;
-void EmitIndirectOperandWithSmallDisp(uint8 rx, Register operand, uint8 displacement)
+void EmitDispla(uint8 rx, uint32 disp)
 {
-	Assert(operand != RSP);
-	EmitRxMode(BYTE_DISPALCED_INDIRECT, rx, operand);
+	EmitRxMode(INDIRECT, rx, RSP);
+	EmitRxMode(X1, RSP, RBP);
+	Emit4disp(disp);
+}
+
+//add rax, [rcx + 0x12]: rx = RAX, operand = RCX, displacement = 0x12;
+void EmitIndirectByteDisplaced(uint8 rx, Register base, int displacement)
+{
+	Assert(base != RSP);
+	EmitRxMode(BYTE_DISPALCED_INDIRECT, rx, base);
 	Emit(displacement);
 }
 
 // add rax, [rcx + 0x12345678]: rx = RAX, operand = RCX, dispalcemnt = 0x12345678
-void EmitIndirectOperandWithBigDisp(uint8 rx, Register operand, uint8 displacement)
+void EmitIndirectDisplay(uint8 rx, Register base, uint8 displacement)
 {
-	Assert(operand != RSP);
-	EmitRxMode(DISPLACED_INDIRECT, rx, operand);
+	Assert((base & 7) != RSP);
+	EmitRxMode(DISPLACED_INDIRECT, rx, base);
 	Emit4disp(displacement);
 }
 
 //add rax, [rcx + 4 * rdx]: rx = RAX, operand = RCX, index = RDX, scale = X4;
-void EmitIndirectIndex(uint8 rx, Register operand, Register index, Scale scale)
+void EmitIndirectIndex(uint8 rx, Register base, Register index, Scale scale)
 {
-	Assert(scale < 4);
+	Assert((base & 7) != RBP);
 	EmitRxMode(INDIRECT, rx, RSP);
-	EmitRxMode(scale, operand, index);
+	EmitRxMode(scale, index, base);
 }
 
 //add rax, [rcx + 4 * rdx + 0x12]: rx = RAX, operand = RCX, index = RDX, scale = X4, displacement = 0x12
-void EmitByteIndirectOperand(uint8 rx, Register operand, Register index, Scale scale, uint32 disp)
+void EmitIndirectIndexedByteDisplayced(uint8 rx, Register operand, Register index, Scale scale, uint32 disp)
 {
 	Assert(scale < 4);
 	EmitRxMode(BYTE_DISPALCED_INDIRECT, rx, 4);
@@ -134,7 +150,7 @@ void EmitByteIndirectOperand(uint8 rx, Register operand, Register index, Scale s
 }
 
 //add rax, [rcx + 4 * rdx + 0x12345678]: rx = RAX, operand = RCX, index = RDX, scale = X4, displacement = 0x12345678
-void EmitIndirectOperand(uint8 rx, Register operand, Register index, Scale scale, uint32 disp)
+void EmitIndirectIndexedDisplayced(uint8 rx, Register operand, Register index, Scale scale, uint32 disp)
 {
 	Assert(scale < 4);
 	EmitRxMode(DISPLACED_INDIRECT, rx, 4);
@@ -142,28 +158,110 @@ void EmitIndirectOperand(uint8 rx, Register operand, Register index, Scale scale
 	Emit4disp(disp);
 }
 
-void EmitAdd()
+void EmitREX(Register rx, Register base, Register index)
 {
-	Emit(0x48);
+	Emit(0x48 | (base >> 3) | ((index >> 3) << 1) | ((rx >> 3) << 2));
+}
+
+void EmitREX2(Register rx, Register base)
+{
+	Emit(0x48 | (base >> 3) | ((rx >> 3) << 2));
+}
+
+
+
+void EmitAddToRegister()
+{
 	Emit(0x03);
 }
 
+void EmitAddReversed()
+{
+	Emit(0x01);
+}
+
+void Emit_ADD_R()
+{
+	Emit(0x03);
+}
+
+void Emit_ADD_RM()
+{
+	Emit(0x01);
+}
+
+void Emit_ADD_I()
+{
+	Emit(0x81);
+}
+
+#define EMIT_R_R(operation, dest, source) \
+	EmitREX2(dest, source); \
+	Emit_##operation##_R(); \
+	EmitDirect(dest, source);
+
+#define EMIT_R_M(operation, destination, source) \
+	EmitREX2(dest, source); \
+	Emit_##operation##_R(); \
+	EmitIndirect(dest, source);
+
+//#define EMIT_RM_R(operation, mode, x, y, ...) \
+//	EmitREX2(x, y);
+//	Emit##operation##ToMemory(); \
+//	Emit##mode(x,y ##__VA_ARGS__)
+
+
 int main(int argc, char **argv)
 {
-	for (uint8 dest = RAX; dest < R8; dest++)
-	{
-		for (uint8 s = RAX; s < R8; s++)
-		{
-			EmitAdd();
-			EmitDirect((Register)dest, (Register)s);
-			if (s != RSP && s != RBP)
-			{
-				EmitAdd();
-				EmitIndirect((Register)dest, (Register)s);
-			}
-			if (s == RBP)
-			{
 
+	for (uint8 d = RAX; d < R15; d++)
+	{
+		Register dest = (Register)d;
+		EmitREX2(dest, (Register)0);
+		EmitAddToRegister();
+		EmitIndirectDisplayRip(dest, 0x12345678);
+		EmitREX2(dest, (Register)0);
+		EmitAddToRegister();
+		EmitDisplaced(dest, 0x12345678);
+		for (uint8 source = RAX; source < R15; source++)
+		{
+			Register s = (Register)source;
+			
+			EMIT_R_R(ADD, dest, s);
+			
+			//EmitREX2(dest, s);
+			//EmitAddToRegister();
+			//EmitDirect(dest, s);
+			EmitREX(dest, s, dest);
+			EmitAddToRegister();
+			EmitIndirectIndex(dest, s, dest, X4);
+
+			if ((s & 7) != RBP)
+			{
+				EmitIndirectIndex(dest, s, dest, X4);
+			}
+			else
+			{
+				EmitIndirectIndexedByteDisplayced(dest, s, dest, X4, 0);
+			}
+			if ((s & 7) != RSP && (s & 7) != RBP)
+			{
+				EMIT_R_M(ADD, dest, s);
+				//EmitREX2(dest, s);
+				//EmitAddToRegister();
+				//EmitIndirect(dest, s);
+				EmitAddToRegister();
+				EmitIndirectByteDisplaced(dest, s, 0x12);
+				EmitAddToRegister();
+				EmitIndirectByteDisplaced(dest, s, 0x12345678);
+
+			}
+
+			if ((s & 7) == RSP)
+			{
+				EmitREX2(dest,s);
+				EmitIndirectIndex(dest, s, RSP, X1);
+				EmitAddToRegister();
 			}
 		}
 	}
@@ -171,6 +269,7 @@ int main(int argc, char **argv)
 	FILE *f = fopen("test.bin", "wb");
 	fwrite(f, emit_pointer - code, 1, f);
 	fclose(f);
+
 
 	//assembly_test();
 
