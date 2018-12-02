@@ -12,6 +12,7 @@ extern "C" void assembly_test();
 
 typedef uint8_t uint8;
 typedef uint32_t uint32;
+typedef uint64_t uint64;
 
 enum Register
 {
@@ -100,11 +101,25 @@ void Emit(uint8 byte)
 
 void Emit4disp(uint32 w)
 {
-	Emit(w && 0xFF);
+	Emit(w & 0xFF);
 	Emit((w >> 8) & 0xFF);
 	Emit((w >> 16) & 0xFF);
 	Emit((w >> 24) & 0xFF);
 }
+
+void Emit8disp(uint64 w)
+{
+	Emit(w & 0xFF);
+	Emit((w >> 8) & 0xFF);
+	Emit((w >> 16) & 0xFF);
+	Emit((w >> 24) & 0xFF);
+
+	Emit((w >> 32) & 0xFF);
+	Emit((w >> 40) & 0xFF);
+	Emit((w >> 48) & 0xFF);
+	Emit((w >> 56) & 0xFF);
+}
+
 
 void EmitRxMode(uint8 mod, uint8 rx, uint8 rm)
 {
@@ -445,13 +460,35 @@ void EmitAddReversed()
 	} \
 	enum { extension_##operation##_X = extension };
 
-
-
-
 #define OP1CI(operation, opcode, extension) \
-	void Emit_##operation##_CI(ConditionCode code) { \
+	void Emit_##operation##_C_I(ConditionCode code) { \
 		Emit(opcode + code); \
 	} 
+
+#define OP2CI(operation, opcode) \
+	void Emit_##operation##_C_I(ConditionCode code) { \
+		Emit(0x0F); \
+		Emit(opcode + code); \
+	} 
+
+#define EMIT_MOV_R_I(destination_register, source_intermeddiate) \
+	EmitREX2(destination_register, (Register)0); \
+	Emit(0xB8); \
+	Emit8disp(source_intermeddiate)
+
+#define EMIT_MOV_RAX_MOFF(source_offset) \
+	EmitREX2((Register)0, (Register)0); \
+	Emit(0xA1); \
+	Emit8disp(source_offset)
+
+#define EMIT_MOV_MOFF_RAX(destination_offset) \
+	EmitREX2((Register)0, (Register)0); \
+	Emit(0xA3); \
+	Emit8disp(destination_offset)
+
+
+OP1M(MOV, 0x8B)
+OP1R(MOV, 0x89)
 
 OP1R(ADD, 0x03)
 OP1M(ADD, 0x01)
@@ -465,8 +502,13 @@ OP1X(MUL, 0xF7, 0x04)
 
 OP1I(JMP, 0xE9, 0x00)
 
-OP1CI(J, 0x70)
+//byte immediate : OP1CI(J, 0x70)
 
+OP2CI(J, 0x80)
+
+
+
+	
 
 //Instructions
 #if 0
@@ -493,6 +535,11 @@ enum { extension_ADD_I = 0 };
 
 int main(int argc, char **argv)
 {
+	EMIT_MOV_R_I(RBX, 0x12345678deadbeefull);
+	EMIT_MOV_RAX_MOFF(0x12345678deadbeefull);
+	EMIT_MOV_MOFF_RAX(0x12345678deadbeefull);
+	EMIT_R_R(MOV, RAX, R10);
+	EMIT_M_R(MOV, RAX, R10);
 	EMIT_I(JMP, -0x1234);
 	EMIT_C_I(J, NZ, 0x1234);
 	EMIT_D_I(ADD, 0x12345678, 0xDEADBEEF);
