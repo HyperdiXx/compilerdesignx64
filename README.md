@@ -1,3 +1,3 @@
 # compilerdesignx64
 Compiler Design X64
-Project for understanding
+Training project for fun
