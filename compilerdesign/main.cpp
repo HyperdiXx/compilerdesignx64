@@ -202,6 +202,19 @@ void EmitAddReversed()
 	Emit_##operation##_R(); \
 	EmitDisplaced(dest, source)
 
+#define EMIT_D_R(operation, destination, source) \
+	EmitREX2(source, (Register)0); \
+	Emit_##operation##_M(); \
+	EmitDisplaced(source, dest)
+
+
+#define EMIT_D_I(operation, destination, source_immediate) \
+	EmitREX2((Register)0, (Register)0); \
+	Emit_##operation##_I(); \
+	EmitDisplaced(extension_##operation##_I, destination); \
+	Emit4disp(source_immediate)
+
+
 #define EMIT_R_MD1(operation, dest, source, disp) \
 	EmitREX2(dest, source); \
 	Emit_##operation##_R(); \
@@ -304,6 +317,66 @@ void EmitAddReversed()
 	EmitIndirectIndexedDisplaced(extension_##operation##_I, destination_base, destination_index, destination_scale, destination_displacement); \
 	Emit4disp(source_immediate)
 
+#define EMIT_RIPD_R(operation, destination_disp, source) \
+	EmitREX2(source, (Register)0); \
+	Emit_##operation##_M(); \
+	EmitIndirectDisplacedRip(source, destination_disp);
+
+
+#define EMIT_RIPD_I(operation, destination_disp, source_immediate) \
+	EmitREX2((Register)0, (Register)0); \
+	Emit_##operation##_I(); \
+	EmitIndirectDisplacedRip(extension_##operation##_I, destination_disp); \
+	Emit4disp(source_immediate)
+
+
+#define EMIT_X_R(operation, source) \
+	EmitREX2((Register)0, source); \
+	Emit_##operation##_X(); \
+	EmitDirect(extension_##operation##_X, source)
+#if 0
+#define EMIT_X_M(operation, destination, source) \
+	EmitREX2(dest, source); \
+	Emit_##operation##_X(); \
+	EmitIndirect(dest, source)
+
+#define EMIT_X_RIPD(operation, destination, rip_disp) \
+	EmitREX2(destination, (Register)0); \
+	Emit_##operation##_R(); \
+	EmitIndirectDisplacedRip(dest, rip_disp)
+
+#define EMIT_R_D(operation, destination, source) \
+	EmitREX2(dest, (Register)0); \
+	Emit_##operation##_R(); \
+	EmitDisplaced(dest, source)
+
+
+#define EMIT_X_MD1(operation, dest, source, disp) \
+	EmitREX2(dest, source); \
+	Emit_##operation##_R(); \
+	EmitIndirectByteDisplaced(dest, source, disp)
+
+
+#define EMIT_R_MD(operation, dest, source, disp) \
+	EmitREX2(dest, source); \
+	Emit_##operation##_R(); \
+	EmitIndirectDisplaced(dest, source, disp)
+
+#define EMIT_R_SIB(operation, destination, source_base, source_scale, source_index) \
+	EmitREX(destination, source_base, source_index); \
+	Emit_##operation##_R(); \
+	EmitIndirectIndex(destination, source_base, source_index, source_scale)
+
+#define EMIT_R_SIBD1(operation, destination, source_base, source_scale, source_index, displacement) \
+	EmitREX(destination, source_base, source_index); \
+	Emit_##operation##_R(); \
+	EmitIndirectIndexedByteDisplaced(destination, source_base, source_index, source_scale, displacement)
+
+#define EMIT_R_SIBD(operation, destination, source_base, source_scale, source_index, displacement) \
+	EmitREX(destination, source_base, source_index); \
+	Emit_##operation##_R(); \
+	EmitIndirectIndexedDisplaced(destination, source_base, source_index, source_scale, displacement)
+#endif
 
 #define OP1R(operation, opcode) \
 	void Emit_##operation##_R() { \
@@ -321,9 +394,27 @@ void EmitAddReversed()
 	} \
 	enum { extension_##operation##_I = extension };
 
+
+#define OP1X(operation, opcode, extension) \
+	void Emit_##operation##_X() { \
+		Emit(opcode); \
+	} \
+	enum { extension_##operation##_X = extension };
+
+
+
 OP1R(ADD, 0x03)
 OP1M(ADD, 0x01)
 OP1I(ADD, 0x81, 0x00)
+//
+//OP1R(ADD, 0x23)
+//OP1M(ADD, 0x21)
+//
+//OP1I(ADD, 0x81, 0x04)
+
+
+OP1X(MUL, 0xF7, 0x04)
+
 
 
 //Instructions
@@ -352,9 +443,13 @@ enum { extension_ADD_I = 0 };
 int main(int argc, char **argv)
 {
 
+	EMIT_D_I(ADD, 0x12345678, 0xDEADBEEF);
+	EMIT_RIPD_I(ADD, 0x12345678, 0xDEADBEEF);
+
 	for (uint8 d = RAX; d < R15; d++)
 	{
 		Register dest = (Register)d;
+		EMIT_X_R(MUL, dest);
 		EMIT_R_I(ADD, dest, 0x12345678);
 		if ((dest & 7) != RSP)
 		{
@@ -367,13 +462,9 @@ int main(int argc, char **argv)
 		}
 		EMIT_R_RIPD(ADD, dest, 0x12345678);
 		EMIT_R_D(ADD, dest, 0x12345678);
+		EMIT_RIPD_R(ADD, 0x12345678, dest);
+		EMIT_D_R(ADD, 0x12345678, dest);
 
-		/*EmitREX2(dest, (Register)0);
-		EmitAddToRegister();
-		EmitIndirectDisplayRip(dest, 0x12345678);
-		EmitREX2(dest, (Register)0);
-		EmitAddToRegister();
-		EmitDisplaced(dest, 0x12345678);*/
 
 		for (uint8 source = RAX; source < R15; source++)
 		{
@@ -386,21 +477,14 @@ int main(int argc, char **argv)
 				EMIT_R_SIB(ADD, dest, s, X4, dest);
 			}
 
-			//EmitREX2(dest, s);
-			//EmitAddToRegister();
-			//EmitDirect(dest, s);
-			//EmitREX(dest, s, dest);
-			//EmitAddToRegister();
-			//EmitIndirectIndex(dest, s, dest, X4);
-
-			if ((s & 7) != RBP)
+	/*		if ((s & 7) != RBP)
 			{
 				EmitIndirectIndex(dest, s, dest, X4);
 			}
 			else
 			{
 				EmitIndirectIndexedByteDisplaced(dest, s, dest, X4, 0);
-			}
+			}*/
 			if ((s & 7) != RSP && (s & 7) != RBP)
 			{
 				EMIT_R_M(ADD, dest, s);
@@ -419,7 +503,7 @@ int main(int argc, char **argv)
 			{
 				EMIT_R_SIB(ADD, dest, s, X1, RSP);
 
-				#if 0
+#if 0
 				EmitREX2(dest,s);
 				EmitIndirectIndex(dest, s, RSP, X1);
 				EmitAddToRegister();
