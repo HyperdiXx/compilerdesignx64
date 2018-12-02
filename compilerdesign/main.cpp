@@ -54,6 +54,41 @@ enum
 	MAX_CODE = 1024
 };
 
+enum ConditionCode
+{
+	O, 
+	NO, 
+	B,
+	NB,
+	E,
+	NE,
+	NA,
+	A,
+	S,
+	NS,
+	P,
+	NP,
+	L,
+	NL,
+	NG,
+	G,
+	NAE = B,
+	C = B,
+	AE = NB,
+	NC = NB,
+	Z = E,
+	NZ = NE,
+	BE = NA,
+	NBE = A,
+	PE = P,
+	PO = NP,
+	NGE = L,
+	GE = NL,
+	LE = NG,
+	NLE = G
+};
+
+
 uint8 code[MAX_CODE];
 uint8* emit_pointer = code;
 
@@ -334,49 +369,58 @@ void EmitAddReversed()
 	EmitREX2((Register)0, source); \
 	Emit_##operation##_X(); \
 	EmitDirect(extension_##operation##_X, source)
-#if 0
-#define EMIT_X_M(operation, destination, source) \
-	EmitREX2(dest, source); \
+
+#define EMIT_X_M(operation, source) \
+	EmitREX2((Register)0, source); \
 	Emit_##operation##_X(); \
-	EmitIndirect(dest, source)
+	EmitIndirect(extension_##operation##_X, source)
 
-#define EMIT_X_RIPD(operation, destination, rip_disp) \
-	EmitREX2(destination, (Register)0); \
-	Emit_##operation##_R(); \
-	EmitIndirectDisplacedRip(dest, rip_disp)
+#define EMIT_X_RIPD(operation, source_disp) \
+	EmitREX2((Register)0, (Register)0); \
+	Emit_##operation##_X(); \
+	EmitIndirectDisplacedRip(extension_##operation##_, source_disp)
 
-#define EMIT_R_D(operation, destination, source) \
-	EmitREX2(dest, (Register)0); \
-	Emit_##operation##_R(); \
-	EmitDisplaced(dest, source)
-
-
-#define EMIT_X_MD1(operation, dest, source, disp) \
-	EmitREX2(dest, source); \
-	Emit_##operation##_R(); \
-	EmitIndirectByteDisplaced(dest, source, disp)
+#define EMIT_X_D(operation, source) \
+	EmitREX2((Register)0, (Register)0); \
+	Emit_##operation##_X(); \
+	EmitDisplaced(extension_##opeartion##_X, source)
 
 
-#define EMIT_R_MD(operation, dest, source, disp) \
-	EmitREX2(dest, source); \
-	Emit_##operation##_R(); \
-	EmitIndirectDisplaced(dest, source, disp)
+#define EMIT_X_MD1(operation, source, disp) \
+	EmitREX2((Register)0, source); \
+	Emit_##operation##_X(); \
+	EmitIndirectByteDisplaced(extension_##operation##_X, source, disp)
 
-#define EMIT_R_SIB(operation, destination, source_base, source_scale, source_index) \
-	EmitREX(destination, source_base, source_index); \
-	Emit_##operation##_R(); \
-	EmitIndirectIndex(destination, source_base, source_index, source_scale)
 
-#define EMIT_R_SIBD1(operation, destination, source_base, source_scale, source_index, displacement) \
-	EmitREX(destination, source_base, source_index); \
-	Emit_##operation##_R(); \
-	EmitIndirectIndexedByteDisplaced(destination, source_base, source_index, source_scale, displacement)
+#define EMIT_X_MD(operation, source, disp) \
+	EmitREX2((Register)0, source); \
+	Emit_##operation##_X(); \
+	EmitIndirectDisplaced(extension_##operation##_X, source, disp)
 
-#define EMIT_R_SIBD(operation, destination, source_base, source_scale, source_index, displacement) \
-	EmitREX(destination, source_base, source_index); \
-	Emit_##operation##_R(); \
-	EmitIndirectIndexedDisplaced(destination, source_base, source_index, source_scale, displacement)
-#endif
+#define EMIT_X_SIB(operation, source_base, source_scale, source_index) \
+	EmitREX((Register)0, source_base, source_index); \
+	Emit_##operation##_X(); \
+	EmitIndirectIndex(extension_##operation##_X, source_base, source_index, source_scale)
+
+#define EMIT_X_SIBD1(operation, source_base, source_scale, source_index, displacement) \
+	EmitREX((Register)0, source_base, source_index); \
+	Emit_##operation##_X(); \
+	EmitIndirectIndexedByteDisplaced(extension_##operation##_X, source_base, source_index, source_scale, displacement)
+
+#define EMIT_X_SIBD(operation, source_base, source_scale, source_index, displacement) \
+	EmitREX((Register)0, source_base, source_index); \
+	Emit_##operation##_X(); \
+	EmitIndirectIndexedDisplaced(extension_##operation##_X, source_base, source_index, source_scale, displacement)
+
+#define EMIT_I(operation, source_immediate) \
+	EmitREX2((Register)0, (Register)0); \
+	Emit_##operation##_I(); \
+	Emit4disp(source_immediate);
+
+#define EMIT_C_I(operation, condition_code, source_immediate) \
+	EmitREX2((Register)0, (Register)0); \
+	Emit_##operation##_C_I(condition_code); \
+	Emit4disp(source_immediate);
 
 #define OP1R(operation, opcode) \
 	void Emit_##operation##_R() { \
@@ -403,18 +447,25 @@ void EmitAddReversed()
 
 
 
+
+#define OP1CI(operation, opcode, extension) \
+	void Emit_##operation##_CI(ConditionCode code) { \
+		Emit(opcode + code); \
+	} 
+
 OP1R(ADD, 0x03)
 OP1M(ADD, 0x01)
 OP1I(ADD, 0x81, 0x00)
-//
-//OP1R(ADD, 0x23)
-//OP1M(ADD, 0x21)
-//
-//OP1I(ADD, 0x81, 0x04)
 
+OP1R(AND, 0x23)
+OP1M(AND, 0x21)
+OP1I(AND, 0x81, 0x04)
 
 OP1X(MUL, 0xF7, 0x04)
 
+OP1I(JMP, 0xE9, 0x00)
+
+OP1CI(J, 0x70)
 
 
 //Instructions
@@ -442,7 +493,8 @@ enum { extension_ADD_I = 0 };
 
 int main(int argc, char **argv)
 {
-
+	EMIT_I(JMP, -0x1234);
+	EMIT_C_I(J, NZ, 0x1234);
 	EMIT_D_I(ADD, 0x12345678, 0xDEADBEEF);
 	EMIT_RIPD_I(ADD, 0x12345678, 0xDEADBEEF);
 
@@ -450,6 +502,26 @@ int main(int argc, char **argv)
 	{
 		Register dest = (Register)d;
 		EMIT_X_R(MUL, dest);
+		if ((dest & 7) != RSP)
+		{
+			EMIT_X_MD1(MUL, dest, 0x12);
+			EMIT_X_MD(MUL, dest, 0x12345678);
+			if ((dest & 7) != RBP)
+			{
+				EMIT_X_M(MUL, dest);
+				EMIT_X_SIB(MUL, dest, X4, R8);
+				EMIT_X_SIBD1(MUL, dest, X4, R8, 0x12);
+				EMIT_X_SIBD(MUL, dest, X4, R8, 0x12345678);
+			}
+		}
+		
+		if ((dest & 7) != RSP)
+		{
+			if ((dest & 7) != RBP)
+			{
+				//EMIT_X_M(MUL);
+			}
+		}
 		EMIT_R_I(ADD, dest, 0x12345678);
 		if ((dest & 7) != RSP)
 		{
