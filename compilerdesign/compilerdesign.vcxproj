@@ -116,10 +116,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp" />
+    <ClCompile Include="hlan.cpp" />
   </ItemGroup>
   <ItemGroup>
     <MASM Include="test.asm" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="m.hlan" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
