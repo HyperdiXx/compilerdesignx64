@@ -11,13 +11,12 @@
 
 extern "C" void assembly_test();
 
-typedef uint8_t uint8;
 typedef uint32_t uint32;
 typedef uint64_t uint64;
 
 //Emitter
 
-enum Register
+enum 
 {
     RAX = 0, 
     RCX = 1, 
@@ -36,6 +35,8 @@ enum Register
     R14 = 14, 
     R15 = 15,
 };
+
+typedef uint8_t Register;
 
 enum Scale
 {
@@ -93,10 +94,10 @@ enum ConditionCode
 };
 
 
-uint8 code[MAX_CODE];
-uint8* emit_pointer = code;
+uint8_t code[MAX_CODE];
+uint8_t* emit_pointer = code;
 
-void Emit(uint8 byte)
+void Emit(uint8_t byte)
 {
     *emit_pointer = byte;
     emit_pointer++;
@@ -124,7 +125,7 @@ void Emit8disp(uint64 w)
 }
 
 
-void EmitRxMode(uint8 mod, uint8 rx, uint8 rm)
+void EmitRxMode(uint8_t mod, uint8_t rx, uint8_t rm)
 {
     Assert(mod < 4);
     Assert(rx < 16);
@@ -135,13 +136,13 @@ void EmitRxMode(uint8 mod, uint8 rx, uint8 rm)
 
 
 // add rax, rcx: rx = RAX, operand = RCX
-void EmitDirect(uint8 rx, Register operand)
+void EmitDirect(uint8_t rx, Register operand)
 {
     EmitRxMode(DIRECT, rx, operand);
 }
 
 //add rax, [rcx]: rx = RAX, operand = RCX
-void EmitIndirect(uint8 rx, Register base)
+void EmitIndirect(uint8_t rx, Register base)
 {
     Assert((base & 7) != RSP);
     Assert((base & 7) != RBP);
@@ -150,19 +151,19 @@ void EmitIndirect(uint8 rx, Register base)
 
 //add rax, [rip + 0x12345678]
 //rax = RAX, disp = 0x12345678
-void EmitIndirectDisplacedRip(uint8 rx, uint32 disp)
+void EmitIndirectDisplacedRip(uint8_t rx, uint32 disp)
 {
     EmitRxMode(INDIRECT, rx, RBP);
     Emit4disp(disp);
 }
 
-void EmitDisplaced(uint8 rx, uint32 disp)
+void EmitDisplaced(uint8_t rx, uint32 disp)
 {
     EmitRxMode(INDIRECT, rx, RBP);
     Emit4disp(disp);
 }
 
-void EmitDispla(uint8 rx, uint32 disp)
+void EmitDispla(uint8_t rx, uint32 disp)
 {
     EmitRxMode(INDIRECT, rx, RSP);
     EmitRxMode(X1, RSP, RBP);
@@ -170,7 +171,7 @@ void EmitDispla(uint8 rx, uint32 disp)
 }
 
 //add rax, [rcx + 0x12]: rx = RAX, operand = RCX, displacement = 0x12;
-void EmitIndirectByteDisplaced(uint8 rx, Register base, int displacement)
+void EmitIndirectByteDisplaced(uint8_t rx, Register base, int displacement)
 {
     Assert(base != RSP);
     EmitRxMode(BYTE_DISPALCED_INDIRECT, rx, base);
@@ -178,7 +179,7 @@ void EmitIndirectByteDisplaced(uint8 rx, Register base, int displacement)
 }
 
 // add rax, [rcx + 0x12345678]: rx = RAX, operand = RCX, dispalcemnt = 0x12345678
-void EmitIndirectDisplaced(uint8 rx, Register base, int displacement)
+void EmitIndirectDisplaced(uint8_t rx, Register base, int displacement)
 {
     Assert((base & 7) != RSP);
     EmitRxMode(DISPLACED_INDIRECT, rx, base);
@@ -186,7 +187,7 @@ void EmitIndirectDisplaced(uint8 rx, Register base, int displacement)
 }
 
 //add rax, [rcx + 4 * rdx]: rx = RAX, operand = RCX, index = RDX, scale = X4;
-void EmitIndirectIndex(uint8 rx, Register base, Register index, Scale scale)
+void EmitIndirectIndex(uint8_t rx, Register base, Register index, Scale scale)
 {
     Assert((base & 7) != RBP);
     EmitRxMode(INDIRECT, rx, RSP);
@@ -194,7 +195,7 @@ void EmitIndirectIndex(uint8 rx, Register base, Register index, Scale scale)
 }
 
 //add rax, [rcx + 4 * rdx + 0x12]: rx = RAX, operand = RCX, index = RDX, scale = X4, displacement = 0x12
-void EmitIndirectIndexedByteDisplaced(uint8 rx, Register operand, Register index, Scale scale, uint32 disp)
+void EmitIndirectIndexedByteDisplaced(uint8_t rx, Register operand, Register index, Scale scale, uint32 disp)
 {
     Assert(scale < 4);
     EmitRxMode(BYTE_DISPALCED_INDIRECT, rx, 4);
@@ -203,7 +204,7 @@ void EmitIndirectIndexedByteDisplaced(uint8 rx, Register operand, Register index
 }
 
 //add rax, [rcx + 4 * rdx + 0x12345678]: rx = RAX, operand = RCX, index = RDX, scale = X4, displacement = 0x12345678
-void EmitIndirectIndexedDisplaced(uint8 rx, Register operand, Register index, Scale scale, uint32 disp)
+void EmitIndirectIndexedDisplaced(uint8_t rx, Register operand, Register index, Scale scale, uint32 disp)
 {
     Assert(scale < 4);
     EmitRxMode(DISPLACED_INDIRECT, rx, 4);
@@ -577,6 +578,7 @@ retry:
     case '/':
     case '(':
     case ')':
+    case '^':
         cur_token = (Token)cur_character;
         ReadCharacters();
         break;
@@ -612,14 +614,32 @@ void ExpectToken(Token expected)
     ReadToken();
 }
 
-uint64 ParseExpr();
+Register next_register;
 
-uint64 ParseFactor()
+Register AllocateRegister()
 {
+    Assert(next_register <= R15);
+    Register cur_reg = next_register;
+    next_register++;
+    return cur_reg;
+}
+
+void Free()
+{
+    Assert(next_register >= RAX);
+    next_register--;
+}
+
+Register ParseExpr();
+
+Register ParsePOW()
+{
+    Register target = AllocateRegister();
     if (cur_token == TOKEN_INTEGER)
     {
         ReadToken();
-        return token_integer;
+        EMIT_MOV_R_I(target, token_integer);
+        return target;
     }
     else if (cur_token == '(')
     {
@@ -632,9 +652,30 @@ uint64 ParseFactor()
     return(0);
 }
 
-uint64 ParseTerm()
+Register ParseFactor()
 {
-    uint64 val = ParseFactor();
+    Register reg = ParsePOW();
+   
+#if 0
+    if (cur_token == '^')
+    {
+        ReadToken();
+        uint64 pow = ParseFactor();
+        uint64 base = token;
+        token = 1;
+        for (size_t i = 0; i < pow; i++)
+        {
+            token *= base;
+        }
+    }
+#endif
+
+    return reg;
+}
+
+Register ParseTerm()
+{
+    Register val = ParseFactor();
     while (cur_token == '*' || cur_token == '/')
     {
         Token operator_t = cur_token;
@@ -652,7 +693,7 @@ uint64 ParseTerm()
     return (val);
 }
 
-uint64 ParseExpr()
+Register ParseExpr()
 {
     uint64 val = ParseTerm();
 //r:
@@ -720,7 +761,7 @@ void Test()
     EMIT_D_I(ADD, 0x12345678, 0xDEADBEEF);
     EMIT_RIPD_I(ADD, 0x12345678, 0xDEADBEEF);
 
-    for (uint8 d = RAX; d < R15; d++)
+    for (uint8_t d = RAX; d < R15; d++)
     {
         Register dest = (Register)d;
         EMIT_X_R(MUL, dest);
@@ -760,7 +801,7 @@ void Test()
         EMIT_D_R(ADD, 0x12345678, dest);
 
 
-        for (uint8 source = RAX; source < R15; source++)
+        for (uint8_t source = RAX; source < R15; source++)
         {
             Register s = (Register)source;
 
