@@ -36,6 +36,12 @@ enum
     R15 = 15,
 };
 
+Register register_allocation_order[] =
+{
+    RAX, RCX, RBX, 
+};
+
+
 typedef uint8_t Register;
 
 enum Scale
@@ -96,6 +102,15 @@ enum ConditionCode
 
 uint8_t code[MAX_CODE];
 uint8_t* emit_pointer = code;
+
+void Dump()
+{
+    FILE *f = fopen("test.bin", "wb");
+    fwrite(f, emit_pointer - code, 1, f);
+    fclose(f);
+}
+
+
 
 void Emit(uint8_t byte)
 {
@@ -476,8 +491,8 @@ void EmitAddReversed()
     } 
 
 #define EMIT_MOV_R_I(destination_register, source_intermeddiate) \
-    EmitREX2(destination_register, (Register)0); \
-    Emit(0xB8); \
+    EmitREX2(destination_register, 0); \
+    Emit(0xB8 + destination_register); \
     Emit8disp(source_intermeddiate)
 
 #define EMIT_MOV_RAX_MOFF(source_offset) \
@@ -497,6 +512,10 @@ OP1R(MOV, 0x89)
 OP1R(ADD, 0x03)
 OP1M(ADD, 0x01)
 OP1I(ADD, 0x81, 0x00)
+
+OP1R(SUB, 0x2B)
+OP1M(SUB, 0x29)
+OP1I(SUB, 0x81, 0x05)
 
 OP1R(AND, 0x23)
 OP1M(AND, 0x21)
@@ -614,49 +633,56 @@ void ExpectToken(Token expected)
     ReadToken();
 }
 
+
+
 Register next_register;
 
-Register AllocateRegister()
+//Register AllocateRegister()
+//{
+//    Assert(next_register <= R15);
+//    Register cur_reg = next_register;
+//    next_register++;
+//    return cur_reg;
+//}
+//
+//void Free()
+//{
+//    Assert(next_register >= RAX);
+//    next_register--;
+//}
+
+Register GetNextRegister(Register dest)
 {
-    Assert(next_register <= R15);
-    Register cur_reg = next_register;
-    next_register++;
-    return cur_reg;
+    Assert(dest <= R15);
+    return (dest + 1);
 }
 
-void Free()
-{
-    Assert(next_register >= RAX);
-    next_register--;
-}
 
-Register ParseExpr();
+void ParseExpr(Register destination);
 
-Register ParsePOW()
-{
-    Register target = AllocateRegister();
+void ParseAtom(Register dest)
+{ 
     if (cur_token == TOKEN_INTEGER)
     {
         ReadToken();
-        EMIT_MOV_R_I(target, token_integer);
-        return target;
+        EMIT_MOV_R_I(dest, token_integer);
     }
     else if (cur_token == '(')
     {
         ReadToken();
-        uint64 value = ParseExpr();
+        ParseExpr(dest);
         ExpectToken((Token)')');
-        return value;
     }
     Assert(0);
-    return(0);
 }
-
+#if 0
 Register ParseFactor()
 {
-    Register reg = ParsePOW();
+   //
+
+    Register target_register = ParseAtom();
    
-#if 0
+
     if (cur_token == '^')
     {
         ReadToken();
@@ -668,34 +694,33 @@ Register ParseFactor()
             token *= base;
         }
     }
+}
 #endif
 
-    return reg;
-}
-
-Register ParseTerm()
+void ParseTerm(Register destination)
 {
-    Register val = ParseFactor();
+    ParseAtom(destination);
     while (cur_token == '*' || cur_token == '/')
     {
         Token operator_t = cur_token;
         ReadToken();
+        Register operand_register = GetNextRegister(destination);
+        ParseAtom(operand_register);
         if (operator_t == '*')
         {
-            val *= ParseFactor();
+            
         }
         else
         {
-            val /= ParseFactor();
+
         }
 
     }
-    return (val);
 }
 
-Register ParseExpr()
+void ParseExpr(Register destination)
 {
-    uint64 val = ParseTerm();
+    ParseAtom(destination);
 //r:
 //    switch (cur_token)
 //    {
@@ -717,17 +742,20 @@ Register ParseExpr()
     {
         Token operator_t = cur_token;
         ReadToken();
+        Register operand_register = GetNextRegister(destination);
+        ParseAtom(operand_register);
         if (operator_t == '+')
         {
-            val += ParseTerm();
+            EMIT_R_R(ADD, destination, operand_register);
+            
         }
         else
         {
-            val -= ParseTerm();
+            EMIT_R_R(SUB, destination, operand_register);
         }
         
     }
-    return (val);
+
 }
 
 
@@ -847,9 +875,7 @@ void Test()
         }
     }
 
-    FILE *f = fopen("test.bin", "wb");
-    fwrite(f, emit_pointer - code, 1, f);
-    fclose(f);
+    Dump();
 
 }
 
@@ -857,7 +883,7 @@ void Test()
 int main(int argc, char **argv)
 {
     ParsingFile("m.hlan");
-    uint64 res = ParseExpr();
+   //uint64 res = ParseExpr(RAX);
     int i = 0x0001;
     return (0);
 }
