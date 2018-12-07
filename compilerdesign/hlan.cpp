@@ -36,13 +36,15 @@ enum
     R15 = 15,
 };
 
+typedef uint8_t Register;
+
 Register register_allocation_order[] =
 {
-    RAX, RCX, RBX, 
+    RAX,
+    RCX,
+    RBX
 };
 
-
-typedef uint8_t Register;
 
 enum Scale
 {
@@ -236,8 +238,6 @@ void EmitREX2(Register rx, Register base)
 {
     Emit(0x48 | (base >> 3) | ((rx >> 3) << 2));
 }
-
-
 
 void EmitAddToRegister()
 {
@@ -509,6 +509,12 @@ void EmitAddReversed()
 OP1M(MOV, 0x8B)
 OP1R(MOV, 0x89)
 
+OP1R(XCHG, 0x87)
+OP1M(XCHG, 0x07)
+
+
+
+
 OP1R(ADD, 0x03)
 OP1M(ADD, 0x01)
 OP1I(ADD, 0x81, 0x00)
@@ -673,8 +679,13 @@ void ParseAtom(Register dest)
         ParseExpr(dest);
         ExpectToken((Token)')');
     }
-    Assert(0);
+    else
+    {
+        Assert(0);
+    }
 }
+
+
 #if 0
 Register ParseFactor()
 {
@@ -708,7 +719,19 @@ void ParseTerm(Register destination)
         ParseAtom(operand_register);
         if (operator_t == '*')
         {
-            
+            if (destination != RAX)
+            {
+                Register temprorary = GetNextRegister(operand_register);
+                EMIT_R_R(MOV, temprorary, RAX);
+                EMIT_R_R(MOV, RAX, destination);
+                EMIT_X_R(MUL, operand_register);
+                EMIT_R_R(MOV, destination, RAX);
+                EMIT_R_R(MOV, RAX, temprorary);
+            }
+            else
+            {
+                EMIT_X_R(MUL, operand_register);
+            }
         }
         else
         {
@@ -720,7 +743,8 @@ void ParseTerm(Register destination)
 
 void ParseExpr(Register destination)
 {
-    ParseAtom(destination);
+    //ParseAtom(destination);
+    ParseTerm(destination);
 //r:
 //    switch (cur_token)
 //    {
@@ -875,15 +899,13 @@ void Test()
         }
     }
 
-    Dump();
-
 }
 
 
 int main(int argc, char **argv)
 {
     ParsingFile("m.hlan");
-   //uint64 res = ParseExpr(RAX);
-    int i = 0x0001;
+    ParseExpr(RAX);
+    Dump();
     return (0);
 }
