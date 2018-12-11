@@ -763,7 +763,7 @@ void ParseTerm(Operand *destination, Register free_register)
         ReadToken();
         Operand operand;
         Register operand_register = GetNextRegister(free_register);
-        ParseAtom(&operand, operand.operand_reg);
+        ParseAtom(&operand, operand_register);
         MoveOperandToRegister(&operand, operand.operand_reg);
         EMIT_R_R(MOV, RAX, destination->operand_reg);
         if (operator_t == '*')
@@ -777,6 +777,30 @@ void ParseTerm(Operand *destination, Register free_register)
         EMIT_R_R(MOV, destination->operand_reg, RAX  );
     }
 }
+
+void EmitAdd(Operand *destination, Operand *operand, Register free_register)
+{
+    if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_IMMEDIATE)
+    {
+        destination->operand_immediateVal += operand->operand_immediateVal;
+    }
+    else
+    {
+        if (destination->type != OPERAND_REGISTER)
+        {
+            MoveOperandToRegister(destination, free_register);
+        }
+        if (operand->type == OPERAND_REGISTER)
+        {
+            EMIT_R_R(ADD, destination->operand_reg, operand->operand_reg);
+        }
+        else
+        {
+            EMIT_R_I(ADD, destination->operand_reg, operand->operand_immediateVal);
+        }
+    }
+}
+
 
 void ParseExpr(Operand *destination, Register free_register)
 {
@@ -801,33 +825,36 @@ void ParseExpr(Operand *destination, Register free_register)
 
     while (cur_token == '+' || cur_token == '-')
     {
+        if (destination->type != OPERAND_REGISTER)
+        {
+            MoveOperandToRegister(destination, free_register);
+        }
         Token operator_t = cur_token;
         ReadToken();
         Operand operand;
-        Register  operand_register = GetNextRegister(free_register);
+        Register operand_register = GetNextRegister(free_register);
         ParseTerm(&operand, operand_register);
         MoveOperandToRegister(&operand, operand_register);
         if (operator_t == '+')
         {
-            if (operand.type == OPERAND_REGISTER)
-            {
-                EMIT_R_R(ADD, destination->operand_reg, operand.operand_reg);
-            }
-            else
-            {
-                EMIT_R_I(ADD, destination->operand_reg, operand.operand_immediateVal);
-            }
-            
+            EmitAdd(destination, &operand, free_register);
         }
         else
         {
-            if (operand.type == OPERAND_REGISTER)
+            if (destination->type == OPERAND_IMMEDIATE && operand.type == OPERAND_IMMEDIATE)
             {
-                EMIT_R_R(SUB, destination->operand_reg, operand.operand_reg);
+                destination->operand_immediateVal -= operand.operand_immediateVal;
             }
             else
             {
-                EMIT_R_I(SUB, destination->operand_reg, operand.operand_immediateVal);
+                if (operand.type == OPERAND_REGISTER)
+                {
+                    EMIT_R_R(SUB, destination->operand_reg, operand.operand_reg);
+                }
+                else
+                {
+                    EMIT_R_I(SUB, destination->operand_reg, operand.operand_immediateVal);
+                }
             }
         }
         
@@ -958,6 +985,8 @@ void Test()
 int main(int argc, char **argv)
 {
     ParsingFile("m.hlan");
+    Operand result;
+    ParseExpr(&result, first_free_register);
     //ParseExpr(RAX);
     Dump();
     return (0);
