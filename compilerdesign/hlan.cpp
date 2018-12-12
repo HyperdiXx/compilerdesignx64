@@ -4,6 +4,7 @@
 #include <string.h>
 #include <windows.h>
 #include <stdint.h>
+#pragma warning(disable: 4146)
 #include <stdio.h>
 
 #ifdef _DEBUG
@@ -571,13 +572,13 @@ enum Token
 {
     TOKEN_EOF = 0,
     LAST_LITERAL_TOKEN = 127,
-    TOKEN_IDENTIFIER,
-    TOKEN_INTEGER
-
+    TOKEN_INTEGER,
+    TOKEN_VAR
 };
 
 Token cur_token;
 uint32 token_integer;
+Register cur_token_register;
 
 void ReadCharacters()
 {
@@ -585,6 +586,8 @@ void ReadCharacters()
     cur_character = *remaining_characters;
     remaining_characters++;
 }
+
+
 
 void ReadToken()
 {
@@ -610,6 +613,21 @@ retry:
     case ')':
     case '^':
         cur_token = (Token)cur_character;
+        ReadCharacters();
+        break;
+    case 'x':
+        cur_token = TOKEN_VAR;
+        cur_token_register = 0;
+        ReadCharacters();
+        break;
+    case 'y':
+        cur_token = TOKEN_VAR;
+        cur_token_register = 1;
+        ReadCharacters();
+        break;
+    case 'z':
+        cur_token = TOKEN_VAR;
+        cur_token_register = 2;
         ReadCharacters();
         break;
     case '0':
@@ -673,6 +691,7 @@ Register GetNextRegister(Register cur_reg)
 
 enum OperandType
 {
+    OPERAND_VARIABLE,
     OPERAND_REGISTER,
     OPERAND_IMMEDIATE
 };
@@ -684,6 +703,7 @@ struct Operand
     {
         Register operand_reg;
         uint32_t operand_immediateVal;
+        uint32_t operand_var;
     };
 };
 
@@ -695,12 +715,19 @@ void MoveOperandToRegister(Operand* operand, Register target_register)
         operand->type = OPERAND_REGISTER;
         operand->operand_reg = target_register;
     }
-    else if (operand->type == OPERAND_REGISTER && operand->operand_reg != target_register)
+    else if (operand->type == OPERAND_VARIABLE)
     {
-        EMIT_R_R(MOV, target_register, operand->operand_reg);
+        uint32 offset = operand->operand_var * 8;
+        //EMIT_R_SIBD(MOV, target_register, RBP, X1, RSP, offset);
+        EMIT_R_MD(MOV, target_register, RBP, offset);
+        operand->type = OPERAND_REGISTER;
         operand->operand_reg = target_register;
     }
-
+    
+    else
+    {
+        Assert(0);
+    }
 
 
 }
@@ -709,7 +736,13 @@ void ParseExpr(Operand *destination, Register free_register);
 
 void ParseAtom(Operand *dest, Register register_free)
 { 
-    if (cur_token == TOKEN_INTEGER)
+    if (cur_token == TOKEN_VAR)
+    {
+        ReadToken();
+        dest->type = OPERAND_VARIABLE;
+        dest->operand_var = cur_token_register;
+    }
+    else if (cur_token == TOKEN_INTEGER)
     {
         ReadToken();
         dest->type = OPERAND_IMMEDIATE;
@@ -725,6 +758,110 @@ void ParseAtom(Operand *dest, Register register_free)
     else
     {
         Assert(0);
+    }
+}
+
+void EmitAdd(Operand *destination, Operand *operand, Register free_register)
+{
+    if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_IMMEDIATE)
+    {
+        destination->operand_immediateVal -= operand->operand_immediateVal;
+    }
+    else if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_REGISTER)
+    {
+        MoveOperandToRegister(operand, free_register);
+        EMIT_R_I(ADD, operand->operand_reg, destination->operand_immediateVal);
+        destination->type = OPERAND_REGISTER;
+        destination->operand_reg = operand->operand_reg;
+    }
+    else
+    {
+        MoveOperandToRegister(destination, free_register);
+        if (operand->type == OPERAND_REGISTER)
+        {
+            EMIT_R_I(ADD, destination->operand_reg, operand->operand_immediateVal);
+        }
+        else
+        {
+            MoveOperandToRegister(operand, GetNextRegister(free_register));
+            EMIT_R_R(ADD, destination->operand_reg, operand->operand_reg);
+        }
+    }
+}
+
+
+
+void EmitMultiply(Operand *destination, Operand *operand, Register free_register)
+{
+    if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_IMMEDIATE)
+    {
+        destination->operand_immediateVal *= operand->operand_immediateVal;
+    }
+    else if (destination->type == OPERAND_IMMEDIATE)
+    {
+        //MoveOperandToRegister(operand, free_register);
+        EMIT_MOV_R_I(RAX, destination->operand_immediateVal);
+        EMIT_X_R(MUL, operand->operand_reg);
+        EMIT_R_R(MOV, free_register, RAX);
+        destination->type = OPERAND_REGISTER;
+        destination->operand_reg = free_register;
+    }
+    else
+    {
+        MoveOperandToRegister(operand, free_register);
+        EMIT_R_R(MOV, RAX, destination->operand_reg);
+        EMIT_X_R(MUL, operand->operand_reg);
+        EMIT_R_R(MOV, destination->operand_reg, RAX);
+    }
+
+}
+
+
+void EmitDivide(Operand *destination, Operand *operand, Register free_register)
+{
+    if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_IMMEDIATE)
+    {
+        destination->operand_immediateVal /= operand->operand_immediateVal;
+    }
+    else if (destination->type == OPERAND_IMMEDIATE)
+    {
+        //MoveOperandToRegister(operand, free_register);
+        EMIT_MOV_R_I(RAX, destination->operand_immediateVal);
+        //EMIT_X_R(DIV, operand->operand_reg);
+        EMIT_R_R(MOV, free_register, RAX);
+        destination->type = OPERAND_REGISTER;
+        destination->operand_reg = free_register;
+    }
+    else
+    {
+        MoveOperandToRegister(operand, free_register);
+        EMIT_R_R(MOV, RAX, destination->operand_reg);
+        //EMIT_X_R(DIV, operand->operand_reg);
+        EMIT_R_R(MOV, destination->operand_reg, RAX);
+    }
+
+}
+
+void ParseTerm(Operand *destination, Register free_register)
+{
+    ParseAtom(destination, free_register);
+
+    while (cur_token == '*' || cur_token == '/')
+    {
+        Token operator_token = cur_token;
+        ReadToken();
+        Operand operand;
+        Register operand_register = GetNextRegister(free_register);
+        ParseTerm(&operand, operand_register);
+        if (operator_token == '*')
+        {
+            EmitMultiply(destination, &operand, free_register);
+        }
+        else
+        {
+            EmitDivide(destination, &operand, free_register);
+        }
+
     }
 }
 
@@ -750,56 +887,70 @@ Register ParseFactor()
 }
 #endif
 
-void ParseTerm(Operand *destination, Register free_register)
-{
-    ParseAtom(destination, free_register);
-    while (cur_token == '*' || cur_token == '/')
-    {
-        if (destination->type != OPERAND_REGISTER)
-        {
-            MoveOperandToRegister(destination, free_register);
-        }
-        Token operator_t = cur_token;
-        ReadToken();
-        Operand operand;
-        Register operand_register = GetNextRegister(free_register);
-        ParseAtom(&operand, operand_register);
-        MoveOperandToRegister(&operand, operand.operand_reg);
-        EMIT_R_R(MOV, RAX, destination->operand_reg);
-        if (operator_t == '*')
-        {       
-            EMIT_X_R(MUL, operand.operand_reg);
-        }
-        else if(operator_t == '/')
-        {
-            //EMIT_X_R(DIV, operand.operand_reg);
-        }
-        EMIT_R_R(MOV, destination->operand_reg, RAX  );
-    }
-}
 
-void EmitAdd(Operand *destination, Operand *operand, Register free_register)
+
+//void ParseTerm(Operand *destination, Register free_register)
+//{
+//    ParseAtom(destination, free_register);
+//    while (cur_token == '*' || cur_token == '/')
+//    {
+//        if (destination->type != OPERAND_REGISTER)
+//        {
+//            MoveOperandToRegister(destination, free_register);
+//        }
+//        Token operator_t = cur_token;
+//        ReadToken();
+//        Operand operand;
+//        Register operand_register = GetNextRegister(free_register);
+//        ParseAtom(&operand, operand_register);
+//        MoveOperandToRegister(&operand, operand.operand_reg);
+//        EMIT_R_R(MOV, RAX, destination->operand_reg);
+//        if (operator_t == '*')
+//        {       
+//            EmitMultiply(destination, &operand, operand_register);
+//            //EMIT_X_R(MUL, operand_register);
+//        }
+//        else if(operator_t == '/')
+//        {
+//            MoveOperandToRegister(&operand, operand_register);
+//            EMIT_R_R(MOV, RAX, destination->operand_reg);
+//            //EMIT_X_R(DIV, operand_register);
+//            EMIT_R_R(MOV, destination->operand_reg, RAX);
+//            //EMIT_X_R(DIV, operand.operand_reg);
+//        }
+//    }
+//}
+
+void EmitSub(Operand *destination, Operand *operand, Register free_register)
 {
     if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_IMMEDIATE)
     {
-        destination->operand_immediateVal += operand->operand_immediateVal;
+        destination->operand_immediateVal -= operand->operand_immediateVal;
+    }
+    else if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_REGISTER)
+    {
+        MoveOperandToRegister(operand, free_register);
+        EMIT_R_I(ADD, operand->operand_reg, destination->operand_immediateVal);
+        destination->type = OPERAND_REGISTER;
+        destination->operand_reg = operand->operand_reg;
     }
     else
     {
-        if (destination->type != OPERAND_REGISTER)
-        {
-            MoveOperandToRegister(destination, free_register);
-        }
+        MoveOperandToRegister(destination, free_register);
         if (operand->type == OPERAND_REGISTER)
-        {
-            EMIT_R_R(ADD, destination->operand_reg, operand->operand_reg);
-        }
-        else
         {
             EMIT_R_I(ADD, destination->operand_reg, operand->operand_immediateVal);
         }
+        else
+        {
+            MoveOperandToRegister(operand, GetNextRegister(free_register));
+            EMIT_R_R(ADD, destination->operand_reg, operand->operand_reg);
+        }
     }
 }
+
+
+
 
 
 void ParseExpr(Operand *destination, Register free_register)
@@ -841,21 +992,7 @@ void ParseExpr(Operand *destination, Register free_register)
         }
         else
         {
-            if (destination->type == OPERAND_IMMEDIATE && operand.type == OPERAND_IMMEDIATE)
-            {
-                destination->operand_immediateVal -= operand.operand_immediateVal;
-            }
-            else
-            {
-                if (operand.type == OPERAND_REGISTER)
-                {
-                    EMIT_R_R(SUB, destination->operand_reg, operand.operand_reg);
-                }
-                else
-                {
-                    EMIT_R_I(SUB, destination->operand_reg, operand.operand_immediateVal);
-                }
-            }
+            EmitSub(destination, &operand, free_register);
         }
         
     }
