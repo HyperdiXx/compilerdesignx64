@@ -20,6 +20,26 @@ extern "C" void assembly_test();
 typedef uint32_t uint32;
 typedef uint64_t uint64;
 
+
+bool IsPowerOFTwo(uint32 val)
+{
+    return val != 0 && (val & (val - 1)) == 0;
+}
+
+uint32 Log2(uint32 val)
+{
+    uint32 v = 0;
+    while (val)
+    {
+        val /= 2;
+        v++;
+    }
+
+    return v;
+}
+
+
+
 //Emitter
 
 enum 
@@ -353,6 +373,11 @@ void EmitAddReversed()
     EmitDirect(extension_##operation##_I, destination); \
     Emit4disp(source_immediate)
 
+#define EMIT_R_I1(operation, destination, source_immediate) \
+    EmitREX2((Register)0, destination); \
+    Emit_##operation##_I1(); \
+    EmitDirect(extension_##operation##_I1, destination); \
+    Emit4disp(source_immediate)
 
 #define EMIT_M_I(operation, destination, source_immediate) \
     EmitREX2((Register)0, destination); \
@@ -479,6 +504,14 @@ void EmitAddReversed()
     enum { extension_##operation##_I = extension };
 
 
+#define OP1I1(operation, opcode, extension) \
+    void Emit_##operation##_I1() { \
+        Emit(opcode); \
+    } \
+    enum { extension_##operation##_I1 = extension };
+
+
+
 #define OP1X(operation, opcode, extension) \
     void Emit_##operation##_X() { \
         Emit(opcode); \
@@ -515,11 +548,8 @@ void EmitAddReversed()
 OP1M(MOV, 0x8B)
 OP1R(MOV, 0x89)
 
-OP1R(XCHG, 0x87)
-OP1M(XCHG, 0x07)
-
-
-
+OP1I1(SHL, 0xC1, 0x04)
+OP1I1(SHR, 0xC1, 0x05)
 
 OP1R(ADD, 0x03)
 OP1M(ADD, 0x01)
@@ -723,14 +753,30 @@ void MoveOperandToRegister(Operand* operand, Register target_register)
         operand->type = OPERAND_REGISTER;
         operand->operand_reg = target_register;
     }
-    
+    else if (operand->type == OPERAND_REGISTER)
+    {
+        if (operand->operand_reg != target_register)
+        {
+            EMIT_R_R(MOV, target_register, operand->operand_reg);
+            operand->operand_reg = target_register;
+        }
+    }
     else
     {
         Assert(0);
     }
+}
 
+void EmitAsRegister(Operand* operand, Register free_register)
+{
+    if (operand->type != OPERAND_REGISTER)
+    {
+        MoveOperandToRegister(operand, free_register);
+    }
 
 }
+
+
 
 void ParseExpr(Operand *destination, Register free_register);
 
@@ -777,6 +823,7 @@ void EmitAdd(Operand *destination, Operand *operand, Register free_register)
     else
     {
         MoveOperandToRegister(destination, free_register);
+        MoveOperandToRegister(operand, GetNextRegister(free_register));
         if (operand->type == OPERAND_REGISTER)
         {
             EMIT_R_I(ADD, destination->operand_reg, operand->operand_immediateVal);
@@ -797,25 +844,29 @@ void EmitMultiply(Operand *destination, Operand *operand, Register free_register
     {
         destination->operand_immediateVal *= operand->operand_immediateVal;
     }
-    else if (destination->type == OPERAND_IMMEDIATE)
+    else if (operand->type == OPERAND_IMMEDIATE && IsPowerOFTwo(operand->operand_immediateVal))
     {
-        //MoveOperandToRegister(operand, free_register);
-        EMIT_MOV_R_I(RAX, destination->operand_immediateVal);
+        EmitAsRegister(destination, free_register);
+        EMIT_R_I1(SHL, destination->operand_reg, Log2(operand->operand_immediateVal));
+    }
+    else if (operand->type == OPERAND_IMMEDIATE && IsPowerOFTwo(operand->operand_immediateVal))
+    {
+        EmitAsRegister(operand, free_register);
+        EMIT_R_I1(SHL, operand->operand_reg, Log2(destination->operand_immediateVal));
+        destination->type = OPERAND_REGISTER;
+        destination->operand_reg = operand->operand_reg;
+    }
+    else
+    {
+        MoveOperandToRegister(operand, RAX);
+        EmitAsRegister(operand, free_register);
         EMIT_X_R(MUL, operand->operand_reg);
         EMIT_R_R(MOV, free_register, RAX);
         destination->type = OPERAND_REGISTER;
         destination->operand_reg = free_register;
     }
-    else
-    {
-        MoveOperandToRegister(operand, free_register);
-        EMIT_R_R(MOV, RAX, destination->operand_reg);
-        EMIT_X_R(MUL, operand->operand_reg);
-        EMIT_R_R(MOV, destination->operand_reg, RAX);
-    }
-
 }
-
+   
 
 void EmitDivide(Operand *destination, Operand *operand, Register free_register)
 {
@@ -823,21 +874,19 @@ void EmitDivide(Operand *destination, Operand *operand, Register free_register)
     {
         destination->operand_immediateVal /= operand->operand_immediateVal;
     }
-    else if (destination->type == OPERAND_IMMEDIATE)
+    else if (operand->type == OPERAND_IMMEDIATE && IsPowerOFTwo(operand->operand_immediateVal))
     {
-        //MoveOperandToRegister(operand, free_register);
-        EMIT_MOV_R_I(RAX, destination->operand_immediateVal);
+        EmitAsRegister(destination, free_register);
+        EMIT_R_I1(SHL, destination->operand_reg, Log2(operand->operand_immediateVal));
+    }
+    else 
+    {
+        MoveOperandToRegister(operand, RAX);
+        EmitAsRegister(operand, free_register);
         //EMIT_X_R(DIV, operand->operand_reg);
         EMIT_R_R(MOV, free_register, RAX);
         destination->type = OPERAND_REGISTER;
         destination->operand_reg = free_register;
-    }
-    else
-    {
-        MoveOperandToRegister(operand, free_register);
-        EMIT_R_R(MOV, RAX, destination->operand_reg);
-        //EMIT_X_R(DIV, operand->operand_reg);
-        EMIT_R_R(MOV, destination->operand_reg, RAX);
     }
 
 }
