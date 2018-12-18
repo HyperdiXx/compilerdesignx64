@@ -547,6 +547,7 @@ void EmitAddReversed()
 
 OP1M(MOV, 0x8B)
 OP1R(MOV, 0x89)
+OP1I(MOVSX, 0xC7, 0x00)
 
 OP1I1(SHL, 0xC1, 0x04)
 OP1I1(SHR, 0xC1, 0x05)
@@ -693,8 +694,27 @@ void ExpectToken(Token expected)
 }
 
 
+uint32 free_register_mask = ((1 << 16) - 1) ^ ((1 << 8) - 1);
 
 Register first_free_register = R15;
+
+Register AllocateRegister()
+{
+    Assert(free_register_mask != 0);
+    DWORD free_register;
+    _BitScanForward(&free_register, free_register_mask);
+    free_register_mask &= ~(1 << free_register);
+    return (Register)free_register;
+}
+
+
+void FreeRegister(Register allocated_register)
+{
+    Assert(free_register_mask & (1 << allocated_register) == 0);
+    free_register_mask |= 1 << allocated_register;
+}
+
+
 
 //Register AllocateRegister()
 //{
@@ -733,7 +753,7 @@ struct Operand
     {
         Register operand_reg;
         uint32_t operand_immediateVal;
-        uint32_t operand_var;
+        uint32_t operand_var_offset;
     };
 };
 
@@ -747,24 +767,19 @@ void MoveOperandToRegister(Operand* operand, Register target_register)
     }
     else if (operand->type == OPERAND_VARIABLE)
     {
-        uint32 offset = operand->operand_var * 8;
-        //EMIT_R_SIBD(MOV, target_register, RBP, X1, RSP, offset);
-        EMIT_R_MD(MOV, target_register, RBP, offset);
-        operand->type = OPERAND_REGISTER;
-        operand->operand_reg = target_register;
+        Assert(operand->operand_var_offset <= INT8_MAX);
+        //EMIT_R_SIBD(MOV, target_register, RBP, X1, RSP, offset);           
+        EMIT_R_MD(MOV, target_register, RBP, operand->operand_var_offset);
     }
     else if (operand->type == OPERAND_REGISTER)
     {
         if (operand->operand_reg != target_register)
         {
             EMIT_R_R(MOV, target_register, operand->operand_reg);
-            operand->operand_reg = target_register;
         }
     }
-    else
-    {
-        Assert(0);
-    }
+    operand->type = OPERAND_REGISTER;
+    operand->operand_reg = target_register;
 }
 
 void EmitAsRegister(Operand* operand, Register free_register)
@@ -786,7 +801,7 @@ void ParseAtom(Operand *dest, Register register_free)
     {
         ReadToken();
         dest->type = OPERAND_VARIABLE;
-        dest->operand_var = cur_token_register;
+        dest->operand_var_offset = cur_token_register * 8;
     }
     else if (cur_token == TOKEN_INTEGER)
     {
@@ -807,34 +822,47 @@ void ParseAtom(Operand *dest, Register register_free)
     }
 }
 
+
+
 void EmitAdd(Operand *destination, Operand *operand, Register free_register)
 {
     if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_IMMEDIATE)
     {
-        destination->operand_immediateVal -= operand->operand_immediateVal;
+        destination->operand_immediateVal += operand->operand_immediateVal;
     }
-    else if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_REGISTER)
+    else if (destination->type == OPERAND_IMMEDIATE)
     {
-        MoveOperandToRegister(operand, free_register);
+        EmitAsRegister(operand, free_register);
         EMIT_R_I(ADD, operand->operand_reg, destination->operand_immediateVal);
         destination->type = OPERAND_REGISTER;
         destination->operand_reg = operand->operand_reg;
     }
     else
     {
-        MoveOperandToRegister(destination, free_register);
-        MoveOperandToRegister(operand, GetNextRegister(free_register));
-        if (operand->type == OPERAND_REGISTER)
+        EmitAsRegister(destination, free_register);
+        if (operand->type == OPERAND_IMMEDIATE)
         {
             EMIT_R_I(ADD, destination->operand_reg, operand->operand_immediateVal);
         }
+        else if (operand->type == OPERAND_VARIABLE)
+        {
+           uint32 offset = operand->operand_var_offset;
+           Assert(offset <= INT8_MAX);
+           EMIT_R_MD1(ADD, destination->operand_reg, RBP, offset);
+        }
         else
         {
-            MoveOperandToRegister(operand, GetNextRegister(free_register));
-            EMIT_R_R(ADD, destination->operand_reg, operand->operand_reg);
+           Assert(operand->type == OPERAND_REGISTER);
+           EMIT_R_R(ADD, destination->operand_reg, operand->operand_reg);
         }
+            //EmitAsRegister(operand, GetNextRegister(free_register));
+         
     }
 }
+
+
+
+
 
 
 
@@ -859,8 +887,16 @@ void EmitMultiply(Operand *destination, Operand *operand, Register free_register
     else
     {
         MoveOperandToRegister(operand, RAX);
-        EmitAsRegister(operand, free_register);
-        EMIT_X_R(MUL, operand->operand_reg);
+        if (operand->type == OPERAND_VARIABLE)
+        {
+            Assert(operand->operand_var_offset <= INT8_MAX);
+            EMIT_X_MD1(MUL, RBP, operand->operand_var_offset);
+        }
+        if (operand->type == OPERAND_REGISTER)
+        {
+            EmitAsRegister(operand, free_register);
+            EMIT_X_R(MUL, operand->operand_reg);
+        }
         EMIT_R_R(MOV, free_register, RAX);
         destination->type = OPERAND_REGISTER;
         destination->operand_reg = free_register;
@@ -877,12 +913,21 @@ void EmitDivide(Operand *destination, Operand *operand, Register free_register)
     else if (operand->type == OPERAND_IMMEDIATE && IsPowerOFTwo(operand->operand_immediateVal))
     {
         EmitAsRegister(destination, free_register);
-        EMIT_R_I1(SHL, destination->operand_reg, Log2(operand->operand_immediateVal));
+        EMIT_R_I1(SHR, destination->operand_reg, Log2(operand->operand_immediateVal));
     }
     else 
     {
         MoveOperandToRegister(operand, RAX);
-        EmitAsRegister(operand, free_register);
+        if (operand->type == OPERAND_VARIABLE)
+        {
+           Assert(operand->operand_var_offset <= INT8_MAX);
+           //EMIT_X_MD1(MOV, RBP, offset);
+           //EMIT_X_MD(DIV, RBP, offset);
+        }
+        if (operand->type == OPERAND_REGISTER)
+        {
+            //EMIT_X_R(DIV, operand->operand_reg);
+        }
         //EMIT_X_R(DIV, operand->operand_reg);
         EMIT_R_R(MOV, free_register, RAX);
         destination->type = OPERAND_REGISTER;
@@ -970,31 +1015,40 @@ Register ParseFactor()
 //    }
 //}
 
+
 void EmitSub(Operand *destination, Operand *operand, Register free_register)
 {
     if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_IMMEDIATE)
     {
         destination->operand_immediateVal -= operand->operand_immediateVal;
     }
-    else if (destination->type == OPERAND_IMMEDIATE && operand->type == OPERAND_REGISTER)
+    else if (destination->type == OPERAND_IMMEDIATE)
     {
-        MoveOperandToRegister(operand, free_register);
+        EmitAsRegister(operand, free_register);
         EMIT_R_I(ADD, operand->operand_reg, destination->operand_immediateVal);
         destination->type = OPERAND_REGISTER;
         destination->operand_reg = operand->operand_reg;
     }
     else
     {
-        MoveOperandToRegister(destination, free_register);
-        if (operand->type == OPERAND_REGISTER)
+        EmitAsRegister(destination, free_register);
+        if (operand->type == OPERAND_IMMEDIATE)
         {
-            EMIT_R_I(ADD, destination->operand_reg, operand->operand_immediateVal);
+            EMIT_R_I(SUB, destination->operand_reg, operand->operand_immediateVal);
+        }
+        else if (operand->type == OPERAND_VARIABLE)
+        {
+            
+            Assert(operand->operand_var_offset <= INT8_MAX);
+            EMIT_R_MD1(SUB, destination->operand_reg, RBP, operand->operand_var_offset);
         }
         else
         {
-            MoveOperandToRegister(operand, GetNextRegister(free_register));
-            EMIT_R_R(ADD, destination->operand_reg, operand->operand_reg);
+            Assert(operand->type == OPERAND_REGISTER);
+            EMIT_R_R(SUB, destination->operand_reg, operand->operand_reg);
         }
+        //EmitAsRegister(operand, GetNextRegister(free_register));
+
     }
 }
 
@@ -1170,6 +1224,13 @@ void Test()
 
 int main(int argc, char **argv)
 {
+    while (free_register_mask)
+    {
+        char tmp[1024];
+        sprintf(tmp, "%d\n", AllocateRegister());
+        OutputDebugString(tmp);
+    }
+    return (0);
     ParsingFile("m.hlan");
     Operand result;
     ParseExpr(&result, first_free_register);
