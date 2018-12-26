@@ -283,9 +283,9 @@ void EmitAddReversed()
     EmitDirect(dest, source)
 
 #define EMIT_R_M(operation, destination, source) \
-    EmitREX2(dest, source); \
+    EmitREX2(destination, source); \
     Emit_##operation##_R(); \
-    EmitIndirect(dest, source)
+    EmitIndirect(destination, source)
 
 #define EMIT_R_RIPD(operation, destination, rip_disp) \
     EmitREX2(destination, (Register)0); \
@@ -599,17 +599,22 @@ enum { extension_ADD_I = 0 };
 char cur_character;
 char *remaining_characters;
 
-enum Token
+enum 
 {
     TOKEN_EOF = 0,
     LAST_LITERAL_TOKEN = 127,
     TOKEN_INTEGER,
-    TOKEN_VAR
+    TOKEN_PRINT,
+    TOKEN_LOCAL_VAR,
+    TOKEN_GLOBAL_VAR
 };
+
+typedef uint8_t Token;
 
 Token cur_token;
 uint32 token_integer;
-Register cur_token_register;
+uint32 cur_token_local_var;
+uint32 cur_token_global_var;
 
 void ReadCharacters()
 {
@@ -636,6 +641,10 @@ retry:
         ReadCharacters();
         goto retry;
         break;
+    case 'p':
+    case '=':
+    case ';':
+
     case '+':
     case '-':
     case '*':
@@ -646,19 +655,18 @@ retry:
         cur_token = (Token)cur_character;
         ReadCharacters();
         break;
+    case 'a':
+    case 'b':
+    case 'c':
+        cur_token = TOKEN_GLOBAL_VAR;
+        cur_token_global_var = cur_character - 'a';
+        ReadCharacters();
+        break;
     case 'x':
-        cur_token = TOKEN_VAR;
-        cur_token_register = 0;
-        ReadCharacters();
-        break;
     case 'y':
-        cur_token = TOKEN_VAR;
-        cur_token_register = 1;
-        ReadCharacters();
-        break;
     case 'z':
-        cur_token = TOKEN_VAR;
-        cur_token_register = 2;
+        cur_token = TOKEN_LOCAL_VAR;
+        cur_token_local_var = cur_character - 'x';
         ReadCharacters();
         break;
     case '0':
@@ -710,7 +718,7 @@ Register AllocateRegister()
 
 void FreeRegister(Register allocated_register)
 {
-    Assert(free_register_mask & (1 << allocated_register) == 0);
+    Assert((free_register_mask & (1 << allocated_register)) == 0);
     free_register_mask |= 1 << allocated_register;
 }
 
@@ -742,9 +750,12 @@ Register GetNextRegister(Register cur_reg)
 enum OperandType
 {
     OPERAND_NULL, 
-    OPERAND_VARIABLE,
+    //OPERAND_VARIABLE, // .mem => [rbp + offset + .mem_offset]
+    OPERAND_FRAME_OFFSET, //[rbp + offset]
+    //OPERAND_MEMORY, //[address]
     OPERAND_REGISTER,
-    OPERAND_IMMEDIATE
+    OPERAND_IMMEDIATE,
+    OPERAND_ADDRESS
 };
 
 struct Operand
@@ -754,7 +765,8 @@ struct Operand
     {
         Register operand_reg;
         uint32_t operand_immediateVal;
-        uint32_t operand_var_offset;
+        uint32_t operand_frame_offset;
+        uint32_t operand_address;
     };
 };
 
@@ -791,17 +803,18 @@ void FreeOperandRegister(Operand* operand)
 
 void MoveOperandToRegister(Operand* operand, Register target_register)
 {
-    if (operand->operand_immediateVal)
+    if (operand->type == OPERAND_IMMEDIATE)
     {
-        EMIT_MOV_R_I(operand->operand_reg, operand->operand_immediateVal);
-        operand->type = OPERAND_REGISTER;
-        operand->operand_reg = target_register;
+        EMIT_R_I(MOVSX, target_register, operand->operand_immediateVal);
     }
-    else if (operand->type == OPERAND_VARIABLE)
+    else if (operand->type == OPERAND_FRAME_OFFSET)
     {
-        Assert(operand->operand_var_offset <= INT8_MAX);
-        //EMIT_R_SIBD(MOV, target_register, RBP, X1, RSP, offset);           
-        EMIT_R_MD(MOV, target_register, RBP, operand->operand_var_offset);
+        Assert(operand->operand_frame_offset <= INT8_MAX);
+        EMIT_R_MD1(MOV, target_register, RBP, operand->operand_frame_offset);
+    }
+    else if (operand->type == OPERAND_ADDRESS)
+    {
+        EMIT_R_M(MOV, target_register, operand->operand_address);
     }
     else if (operand->type == OPERAND_REGISTER)
     {
@@ -832,11 +845,17 @@ void ParseExpr(Operand *destination);
 
 void ParseAtom(Operand *dest)
 { 
-    if (cur_token == TOKEN_VAR)
+    if (cur_token == TOKEN_LOCAL_VAR)
     {
         ReadToken();
-        dest->type = OPERAND_VARIABLE;
-        dest->operand_var_offset = cur_token_register * 8;
+        dest->type = OPERAND_FRAME_OFFSET;
+        dest->operand_frame_offset = cur_token_local_var * 8;
+    }
+    else if (cur_token == TOKEN_GLOBAL_VAR)
+    {
+        ReadToken();
+        dest->type = OPERAND_ADDRESS;
+        dest->operand_address = cur_token_global_var * 8;
     }
     else if (cur_token == TOKEN_INTEGER)
     {
@@ -879,9 +898,9 @@ void EmitAdd(Operand *destination, Operand *operand)
         {
             EMIT_R_I(ADD, destination->operand_reg, operand->operand_immediateVal);
         }
-        else if (operand->type == OPERAND_VARIABLE)
+        else if (operand->type == OPERAND_FRAME_OFFSET)
         {
-           uint32 offset = operand->operand_var_offset;
+           uint32 offset = operand->operand_frame_offset;
            Assert(offset <= INT8_MAX);
            EMIT_R_MD1(ADD, destination->operand_reg, RBP, offset);
         }
@@ -916,12 +935,16 @@ void EmitMultiply(Operand *destination, Operand *operand)
     else
     {
         MoveOperandToRegister(operand, RAX);
-        if (operand->type == OPERAND_VARIABLE)
+        if (operand->type == OPERAND_FRAME_OFFSET)
         {
-            Assert(operand->operand_var_offset <= INT8_MAX);
-            EMIT_X_MD1(MUL, RBP, operand->operand_var_offset);
+            Assert(operand->operand_frame_offset  <= INT8_MAX);
+            EMIT_X_MD1(MUL, RBP, operand->operand_frame_offset);
         }
-        if (operand->type == OPERAND_REGISTER)
+        else if (operand->type == OPERAND_ADDRESS)
+        {
+            EMIT_X_M(MUL, operand->operand_address);
+        }
+        else 
         {
             EmitAsRegister(operand);
             EMIT_X_R(MUL, operand->operand_reg);
@@ -947,9 +970,9 @@ void EmitDivide(Operand *destination, Operand *operand)
     else 
     {
         MoveOperandToRegister(operand, RAX);
-        if (operand->type == OPERAND_VARIABLE)
+        if (operand->type == OPERAND_FRAME_OFFSET)
         {
-           Assert(operand->operand_var_offset <= INT8_MAX);
+           Assert(operand->operand_frame_offset <= INT8_MAX);
            //EMIT_X_MD1(MOV, RBP, offset);
            //EMIT_X_MD(DIV, RBP, offset);
         }
@@ -973,7 +996,6 @@ void ParseTerm(Operand *destination)
         Token operator_token = cur_token;
         ReadToken();
         Operand operand;
-        //Register operand_register = GetNextRegister(free_register);
         ParseTerm(&operand);
         if (operator_token == '*')
         {
@@ -1064,11 +1086,11 @@ void EmitSub(Operand *destination, Operand *operand)
         {
             EMIT_R_I(SUB, destination->operand_reg, operand->operand_immediateVal);
         }
-        else if (operand->type == OPERAND_VARIABLE)
+        else if (operand->type == OPERAND_FRAME_OFFSET)
         {
             
-            Assert(operand->operand_var_offset <= INT8_MAX);
-            EMIT_R_MD1(SUB, destination->operand_reg, RBP, operand->operand_var_offset);
+            Assert(operand->operand_frame_offset <= INT8_MAX);
+            EMIT_R_MD1(SUB, destination->operand_reg, RBP, operand->operand_frame_offset);
         }
         else
         {
@@ -1124,6 +1146,23 @@ void ParseExpr(Operand *destination)
             EmitSub(destination, &operand);
         }
         FreeOperandRegister(&operand);
+    }
+
+}
+
+void ParseStatement()
+{
+    if (cur_token == 'p')
+    {
+        ReadToken();
+        Operand operand;
+        ParseExpr(&operand);
+        FreeOperandRegister(&operand);
+    }
+    else if(cur_token == TOKEN_LOCAL_VAR)
+    {
+        ParseExpr(&operand);
+
     }
 
 }
@@ -1253,8 +1292,10 @@ int main(int argc, char **argv)
     while (free_register_mask)
     {
         char tmp[1024];
-        sprintf(tmp, "%d\n", AllocateRegister());
+        Register free_register = AllocateRegister();
+        sprintf(tmp, "%d\n", free_register);
         OutputDebugString(tmp);
+        FreeRegister(free_register);
     }
     return (0);
     ParsingFile("m.hlan");
