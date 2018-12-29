@@ -483,7 +483,6 @@ void EmitAddReversed()
     Emit4disp(source_immediate);
 
 #define EMIT_C_I(operation, condition_code, source_immediate) \
-    EmitREX2((Register)0, (Register)0); \
     Emit_##operation##_C_I(condition_code); \
     Emit4disp(source_immediate);
 
@@ -565,6 +564,9 @@ OP1M(AND, 0x21)
 OP1I(AND, 0x81, 0x04)
 
 OP1X(MUL, 0xF7, 0x04)
+OP1X(DIV, 0xF7, 0x06)
+
+OP1I(CMP, 0x81, 0x07)
 
 OP1I(JMP, 0xE9, 0x00)
 
@@ -599,14 +601,17 @@ enum { extension_ADD_I = 0 };
 char cur_character;
 char *remaining_characters;
 
-enum 
+enum
 {
     TOKEN_EOF = 0,
     LAST_LITERAL_TOKEN = 127,
     TOKEN_INTEGER,
-    TOKEN_PRINT,
     TOKEN_LOCAL_VAR,
-    TOKEN_GLOBAL_VAR
+    TOKEN_GLOBAL_VAR,
+    TOKEN_PRINT = 'p',
+    TOKEN_IF = 'i',
+    TOKEN_ELSE = 'e',
+    TOKEN_WHILE = 'w'
 };
 
 typedef uint8_t Token;
@@ -639,6 +644,9 @@ retry:
         ReadCharacters();
         goto retry;
         break;
+    case 'i':
+    case 'e':
+    case 'w':
     case 'p':
     case '=':
     case ';':
@@ -699,6 +707,7 @@ void ExpectToken(Token expected)
     Assert(cur_token == expected);
     ReadToken();
 }
+
 
 
 uint32 free_register_mask;
@@ -845,7 +854,6 @@ void EmitAsRegister(Operand* operand)
         operand->type = OPERAND_REGISTER;
         operand->operand_reg = target_regster;
     }
-
 }
 
 
@@ -987,7 +995,7 @@ void EmitDivide(Operand *destination, Operand *operand)
         if (operand->type == OPERAND_REGISTER)
         {
             EmitAsRegister(operand);
-           //EMIT_X_R(DIV, operand->operand_reg);
+           EMIT_X_R(DIV, operand->operand_reg);
         }
         AllocateOperandRegister(destination);
         EMIT_R_R(MOV, destination->operand_reg, RAX);        
@@ -1162,16 +1170,58 @@ void ParseToken()
 
 }
 
+
+void ParseStatemnetBlock();
+
 void ParseStatement()
 {
    
-    if (cur_token == 'p')
+    if (cur_token == TOKEN_PRINT)
     {
         Operand operand;
         ReadToken();
         ParseExpr(&operand);
         FreeOperandRegister(&operand);
     } 
+    else if (cur_token == TOKEN_IF)
+    {
+        
+        ReadToken();
+        ExpectToken('(');
+        Operand condition_operand;
+        ParseExpr(&condition_operand);
+        ExpectToken(')');
+        EmitAsRegister(&condition_operand);
+        EMIT_R_I(CMP, condition_operand.operand_reg, 0);
+        EMIT_C_I(J, Z, 0);
+        uint8_t *endcode_if = code;
+        uint8_t *jmp_offset_if = (code - 4);
+        FreeOperandRegister(&condition_operand);
+        ParseStatemnetBlock();
+        
+        if (cur_token == TOKEN_ELSE)
+        {
+            ReadToken();
+            EMIT_I(JMP, 0);
+            uint8_t *endcode_else = code;
+            uint8_t *jmp_offset_else = (code - 4);
+            ParseStatemnetBlock();
+            *(uint32 *)jmp_offset_else = (uint32)(code - endcode_else);
+        }
+        else
+        {
+            *(uint32*)jmp_offset_if = (uint32)(code - endcode_if);
+        }
+    }
+    else if (cur_token == TOKEN_WHILE)
+    {
+        ParseToken();
+        ExpectToken('(');
+        Operand parseExpr;
+        ParseExpr(&parseExpr);
+        ExpectToken(')');
+        FreeOperandRegister(&parseExpr);
+    }
     else if(cur_token == TOKEN_LOCAL_VAR)
     {
         uint32 localvar = cur_token_local_var;
@@ -1221,6 +1271,7 @@ void ParseStatement()
 }
 
 
+
 void ParseStatemnetBlock()
 {
     ExpectToken('{');
@@ -1229,8 +1280,6 @@ void ParseStatemnetBlock()
         ParseStatement();
     }
     ExpectToken('}');
-
-
 }
 
 
