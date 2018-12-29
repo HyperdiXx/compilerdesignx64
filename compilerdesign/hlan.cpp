@@ -623,8 +623,6 @@ void ReadCharacters()
     remaining_characters++;
 }
 
-
-
 void ReadToken()
 {
 retry:
@@ -644,11 +642,12 @@ retry:
     case 'p':
     case '=':
     case ';':
-
     case '+':
     case '-':
     case '*':
     case '/':
+    case '{':
+    case '}':
     case '(':
     case ')':
     case '^':
@@ -702,9 +701,20 @@ void ExpectToken(Token expected)
 }
 
 
-uint32 free_register_mask = ((1 << 16) - 1) ^ ((1 << 8) - 1);
+uint32 free_register_mask;
 
 Register first_free_register = R15;
+
+
+void InitFreeRegister()
+{
+    Register available_registers[] = {RCX, RBX, RSI, RDI, R8, R9, R10, R11, R12, R13, R14, R15};
+
+    for (size_t i = 0; i < sizeof(available_registers) / sizeof(*available_registers); i++)
+    {
+        free_register_mask |= 1 << available_registers[i];
+    }
+}
 
 Register AllocateRegister()
 {
@@ -718,7 +728,7 @@ Register AllocateRegister()
 
 void FreeRegister(Register allocated_register)
 {
-    Assert((free_register_mask & (1 << allocated_register)) == 0);
+    Assert(free_register_mask & (1 << allocated_register) == 0);
     free_register_mask |= 1 << allocated_register;
 }
 
@@ -794,10 +804,8 @@ void FreeOperandRegister(Operand* operand)
     if (operand->type == OPERAND_REGISTER)
     {
         FreeRegister(operand->operand_reg);
-
     }
     operand->type = OPERAND_NULL;
-
 }
 
 
@@ -827,18 +835,18 @@ void MoveOperandToRegister(Operand* operand, Register target_register)
     operand->operand_reg = target_register;
 }
 
+
 void EmitAsRegister(Operand* operand)
 {
     if (operand->type != OPERAND_REGISTER)
     {
-        Register targett_regster = AllocateRegister();;
-        MoveOperandToRegister(operand, targett_regster);
+        Register target_regster = AllocateRegister();
+        MoveOperandToRegister(operand, target_regster);
         operand->type = OPERAND_REGISTER;
-        operand->operand_reg = targett_regster;
+        operand->operand_reg = target_regster;
     }
 
 }
-
 
 
 void ParseExpr(Operand *destination);
@@ -1147,23 +1155,81 @@ void ParseExpr(Operand *destination)
         }
         FreeOperandRegister(&operand);
     }
+}
+
+void ParseToken()
+{
 
 }
 
 void ParseStatement()
 {
+   
     if (cur_token == 'p')
     {
-        ReadToken();
         Operand operand;
+        ReadToken();
         ParseExpr(&operand);
         FreeOperandRegister(&operand);
-    }
+    } 
     else if(cur_token == TOKEN_LOCAL_VAR)
     {
+        uint32 localvar = cur_token_local_var;
+        uint32 localvaroffset = localvar * 8;
+        ParseToken();
+        ExpectToken('=');
+        Operand operand;
         ParseExpr(&operand);
+        if (operand.type == OPERAND_IMMEDIATE)
+        {
+            EMIT_MD1_I(MOVSX, RBP, localvaroffset, operand.operand_immediateVal);
+        }
+        else
+        {
+            EmitAsRegister(&operand);
+            EMIT_MD1_R(MOV, RBP, operand.operand_frame_offset, operand.operand_reg);
+        }
+        FreeOperandRegister(&operand);
+        ExpectToken(';');
+    }
+    else if (cur_token == TOKEN_GLOBAL_VAR)
+    {
+        uint32 globalvar = cur_token_global_var;
+        uint32 globalvaradress = cur_token_global_var * 8;
+        ParseToken();
+        ExpectToken('=');
+        Operand operand;
+        ParseExpr(&operand);
+        if (operand.type == OPERAND_IMMEDIATE)
+        {
+            EMIT_MD1_I(MOVSX, RBP, globalvaradress, operand.operand_immediateVal);
+        }
+        else
+        {
+            EmitAsRegister(&operand);
+            EMIT_MD1_R(MOV, RBP, globalvaradress, operand.operand_reg);
+        }
+        FreeOperandRegister(&operand);
+        ExpectToken(';');
 
     }
+    else
+    {
+        Assert(0);
+    }
+    ExpectToken(';');
+}
+
+
+void ParseStatemnetBlock()
+{
+    ExpectToken('{');
+    while (cur_token != '}')
+    {
+        ParseStatement();
+    }
+    ExpectToken('}');
+
 
 }
 
@@ -1289,18 +1355,11 @@ void Test()
 
 int main(int argc, char **argv)
 {
-    while (free_register_mask)
-    {
-        char tmp[1024];
-        Register free_register = AllocateRegister();
-        sprintf(tmp, "%d\n", free_register);
-        OutputDebugString(tmp);
-        FreeRegister(free_register);
-    }
-    return (0);
+    InitFreeRegister();
     ParsingFile("m.hlan");
     Operand result;
-    ParseExpr(&result);
+    //ParseExpr(&result);
+    ParseStatemnetBlock();
     //ParseExpr(RAX);
     Dump();
     return (0);
