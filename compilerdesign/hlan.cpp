@@ -1216,11 +1216,22 @@ void ParseStatement()
     else if (cur_token == TOKEN_WHILE)
     {
         ParseToken();
+        EMIT_I(JMP, 0);
+
+        uint8_t *while_statement = code;
         ExpectToken('(');
         Operand parseExpr;
         ParseExpr(&parseExpr);
         ExpectToken(')');
+        EMIT_R_I(CMP, parseExpr.operand_reg, 0);
+        EMIT_C_I(J, Z, 0);
+        uint8_t *while_jump_adress = code;
+        uint8_t *while_jump_immdiate_adress = code - 4;
         FreeOperandRegister(&parseExpr);
+
+        ParseStatemnetBlock();
+        EMIT_I(JMP, code - while_statement);
+        *(uint32 *)while_jump_immdiate_adress = (uint32)(code - while_jump_adress);
     }
     else if(cur_token == TOKEN_LOCAL_VAR)
     {
@@ -1237,7 +1248,7 @@ void ParseStatement()
         else
         {
             EmitAsRegister(&operand);
-            EMIT_MD1_R(MOV, RBP, operand.operand_frame_offset, operand.operand_reg);
+            EMIT_MD1_R(MOV, RBP, localvaroffset, operand.operand_reg);
         }
         FreeOperandRegister(&operand);
         ExpectToken(';');
